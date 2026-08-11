@@ -53,6 +53,13 @@ app.get("/", (req, res) => {
 // Routes
 // ==============================
 
+app.get("/api/test", (req, res) => {
+  res.json({
+    success: true,
+    message: "API routing is working 🚀"
+  });
+});
+
 app.use(
   "/api/resume",
   resumeRoutes
