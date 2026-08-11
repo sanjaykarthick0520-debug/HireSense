@@ -1,8 +1,28 @@
 import { put } from "@vercel/blob";
-import * as pdfjsLib from "pdfjs-dist/legacy/build/pdf.mjs";
+
+import {
+  DOMMatrix,
+  Path2D,
+  ImageData,
+} from "@napi-rs/canvas";
 
 import prisma from "../config/prisma.js";
 import { analyzeResume } from "../services/geminiService.js";
+
+// =========================================================
+// PDF.JS NODE COMPATIBILITY
+// =========================================================
+
+// Make browser-like APIs available before loading pdfjs-dist
+globalThis.DOMMatrix = DOMMatrix;
+globalThis.Path2D = Path2D;
+globalThis.ImageData = ImageData;
+
+// IMPORTANT:
+// pdfjs-dist is loaded only AFTER the globals above exist.
+const pdfjsLib = await import(
+  "pdfjs-dist/legacy/build/pdf.mjs"
+);
 
 // =========================================================
 // EXTRACT TEXT FROM PDF BUFFER
@@ -147,48 +167,49 @@ export const uploadResume = async (req, res) => {
     // 7. Save complete AI analysis
     // ---------------------------------------
 
-    const analysis = await prisma.analysis.create({
-      data: {
-        targetRole:
-          aiResult.targetRole || targetRole,
+    const analysis =
+      await prisma.analysis.create({
+        data: {
+          targetRole:
+            aiResult.targetRole || targetRole,
 
-        overallScore:
-          aiResult.overallScore,
+          overallScore:
+            aiResult.overallScore,
 
-        jobMatch:
-          aiResult.jobMatch,
+          jobMatch:
+            aiResult.jobMatch,
 
-        keywordMatch:
-          aiResult.keywordMatch,
+          keywordMatch:
+            aiResult.keywordMatch,
 
-        technicalSkills:
-          aiResult.technicalSkills,
+          technicalSkills:
+            aiResult.technicalSkills,
 
-        experienceRelevance:
-          aiResult.experienceRelevance,
+          experienceRelevance:
+            aiResult.experienceRelevance,
 
-        projectRelevance:
-          aiResult.projectRelevance,
+          projectRelevance:
+            aiResult.projectRelevance,
 
-        resumeStructure:
-          aiResult.resumeStructure,
+          resumeStructure:
+            aiResult.resumeStructure,
 
-        strengths:
-          aiResult.strengths,
+          strengths:
+            aiResult.strengths,
 
-        weaknesses:
-          aiResult.weaknesses,
+          weaknesses:
+            aiResult.weaknesses,
 
-        missingKeywords:
-          aiResult.missingKeywords,
+          missingKeywords:
+            aiResult.missingKeywords,
 
-        suggestions:
-          aiResult.suggestions,
+          suggestions:
+            aiResult.suggestions,
 
-        resumeId:
-          createdResume.id,
-      },
-    });
+          resumeId:
+            createdResume.id,
+        },
+      });
 
     // ---------------------------------------
     // 8. Update resume with final AI status
