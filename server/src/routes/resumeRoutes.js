@@ -8,6 +8,7 @@ import {
 
 import {
   getResumes,
+  getResumeFile,
 } from "../controllers/getResumeController.js";
 
 import {
@@ -33,6 +34,16 @@ router.get(
 
 
 // =========================================================
+// GET PRIVATE RESUME FILE
+// =========================================================
+
+router.get(
+  "/:id/file",
+  getResumeFile
+);
+
+
+// =========================================================
 // UPLOAD + ANALYZE RESUME
 // =========================================================
 
@@ -45,7 +56,6 @@ router.post(
 
 // =========================================================
 // COMPARE SELECTED RESUMES
-// OPTIONAL FEATURE
 // =========================================================
 
 router.post(

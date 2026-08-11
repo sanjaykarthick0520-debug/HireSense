@@ -136,8 +136,12 @@ export default function Dashboard() {
       return;
     }
 
-    const pdfUrl = `http://localhost:5000${resume.fileUrl}`;
-    window.open(pdfUrl, "_blank", "noopener,noreferrer");
+    // Vercel Blob URL is stored directly in resume.fileUrl.
+    window.open(
+      resume.fileUrl,
+      "_blank",
+      "noopener,noreferrer"
+    );
   }
 
   function downloadResume(resume) {
@@ -146,12 +150,14 @@ export default function Dashboard() {
       return;
     }
 
-    const pdfUrl = `http://localhost:5000${resume.fileUrl}`;
+    // Vercel Blob URL is stored directly in resume.fileUrl.
     const link = document.createElement("a");
 
-    link.href = pdfUrl;
-    link.download = resume.originalName || "resume.pdf";
+    link.href = resume.fileUrl;
+    link.download =
+      resume.originalName || "resume.pdf";
     link.target = "_blank";
+    link.rel = "noopener noreferrer";
 
     document.body.appendChild(link);
     link.click();

@@ -1,11 +1,15 @@
-import fs from "fs";
+import { put } from "@vercel/blob";
 import * as pdfjsLib from "pdfjs-dist/legacy/build/pdf.mjs";
 
 import prisma from "../config/prisma.js";
 import { analyzeResume } from "../services/geminiService.js";
 
-async function extractPdfText(filePath) {
-  const data = new Uint8Array(fs.readFileSync(filePath));
+// =========================================================
+// EXTRACT TEXT FROM PDF BUFFER
+// =========================================================
+
+async function extractPdfText(buffer) {
+  const data = new Uint8Array(buffer);
 
   const loadingTask = pdfjsLib.getDocument({
     data,
@@ -23,6 +27,7 @@ async function extractPdfText(filePath) {
     pageNumber++
   ) {
     const page = await pdfDocument.getPage(pageNumber);
+
     const content = await page.getTextContent();
 
     const pageText = content.items
@@ -35,6 +40,10 @@ async function extractPdfText(filePath) {
   return text.trim();
 }
 
+// =========================================================
+// UPLOAD + ANALYZE RESUME
+// =========================================================
+
 export const uploadResume = async (req, res) => {
   let createdResume = null;
 
@@ -42,6 +51,7 @@ export const uploadResume = async (req, res) => {
     // ---------------------------------------
     // 1. Validate uploaded PDF
     // ---------------------------------------
+
     if (!req.file) {
       return res.status(400).json({
         success: false,
@@ -52,6 +62,7 @@ export const uploadResume = async (req, res) => {
     // ---------------------------------------
     // 2. Get target job role
     // ---------------------------------------
+
     const targetRole = req.body.targetRole?.trim();
 
     if (!targetRole) {
@@ -65,23 +76,11 @@ export const uploadResume = async (req, res) => {
     console.log(`Target role: ${targetRole}`);
 
     // ---------------------------------------
-    // 3. Save resume in database
+    // 3. Extract text from PDF
     // ---------------------------------------
-    createdResume = await prisma.resume.create({
-      data: {
-        title: req.file.originalname,
-        originalName: req.file.originalname,
-        fileUrl: `/uploads/${req.file.filename}`,
-        targetRole: targetRole,
-        aiStatus: "Analyzing",
-      },
-    });
 
-    // ---------------------------------------
-    // 4. Extract text from PDF
-    // ---------------------------------------
     const resumeText = await extractPdfText(
-      req.file.path
+      req.file.buffer
     );
 
     if (!resumeText) {
@@ -95,8 +94,46 @@ export const uploadResume = async (req, res) => {
     );
 
     // ---------------------------------------
-    // 5. Send resume + target role to Gemini
+    // 4. Upload PDF to Vercel Blob
     // ---------------------------------------
+
+    const safeFileName = req.file.originalname
+      .replace(/[^a-zA-Z0-9.-]/g, "_");
+
+    const blobPath =
+      `resumes/${Date.now()}-${safeFileName}`;
+
+    const blob = await put(
+      blobPath,
+      req.file.buffer,
+      {
+        access: "private",
+        contentType: "application/pdf",
+      }
+    );
+
+    console.log(
+      "Resume uploaded to Vercel Blob successfully."
+    );
+
+    // ---------------------------------------
+    // 5. Save resume in database
+    // ---------------------------------------
+
+    createdResume = await prisma.resume.create({
+      data: {
+        title: req.file.originalname,
+        originalName: req.file.originalname,
+        fileUrl: blob.url,
+        targetRole: targetRole,
+        aiStatus: "Analyzing",
+      },
+    });
+
+    // ---------------------------------------
+    // 6. Send resume + target role to Gemini
+    // ---------------------------------------
+
     const aiResult = await analyzeResume(
       resumeText,
       targetRole
@@ -107,54 +144,71 @@ export const uploadResume = async (req, res) => {
     );
 
     // ---------------------------------------
-    // 6. Save complete AI analysis
+    // 7. Save complete AI analysis
     // ---------------------------------------
+
     const analysis = await prisma.analysis.create({
       data: {
         targetRole:
           aiResult.targetRole || targetRole,
 
-        // Main scores
-        overallScore: aiResult.overallScore,
-        jobMatch: aiResult.jobMatch,
+        overallScore:
+          aiResult.overallScore,
 
-        // Detailed score breakdown
-        keywordMatch: aiResult.keywordMatch,
+        jobMatch:
+          aiResult.jobMatch,
+
+        keywordMatch:
+          aiResult.keywordMatch,
+
         technicalSkills:
           aiResult.technicalSkills,
+
         experienceRelevance:
           aiResult.experienceRelevance,
+
         projectRelevance:
           aiResult.projectRelevance,
+
         resumeStructure:
           aiResult.resumeStructure,
 
-        // AI analysis
-        strengths: aiResult.strengths,
-        weaknesses: aiResult.weaknesses,
+        strengths:
+          aiResult.strengths,
+
+        weaknesses:
+          aiResult.weaknesses,
+
         missingKeywords:
           aiResult.missingKeywords,
-        suggestions: aiResult.suggestions,
 
-        resumeId: createdResume.id,
+        suggestions:
+          aiResult.suggestions,
+
+        resumeId:
+          createdResume.id,
       },
     });
 
     // ---------------------------------------
-    // 7. Update resume with final AI status
+    // 8. Update resume with final AI status
     // ---------------------------------------
+
     const updatedResume =
       await prisma.resume.update({
         where: {
           id: createdResume.id,
         },
+
         data: {
           targetRole:
             aiResult.targetRole || targetRole,
 
-          atsScore: aiResult.overallScore,
+          atsScore:
+            aiResult.overallScore,
 
-          aiStatus: "Analyzed",
+          aiStatus:
+            "Analyzed",
         },
       });
 
@@ -163,17 +217,21 @@ export const uploadResume = async (req, res) => {
     );
 
     // ---------------------------------------
-    // 8. Return result
+    // 9. Return result
     // ---------------------------------------
+
     return res.status(201).json({
       success: true,
+
       message:
         "Resume analyzed successfully.",
 
-      resume: updatedResume,
+      resume:
+        updatedResume,
 
       analysis,
     });
+
   } catch (error) {
     console.error(
       "Resume analysis error:",
@@ -181,8 +239,9 @@ export const uploadResume = async (req, res) => {
     );
 
     // ---------------------------------------
-    // 9. Cleanup incomplete database record
+    // 10. Cleanup incomplete database record
     // ---------------------------------------
+
     if (createdResume) {
       try {
         await prisma.resume.delete({
@@ -194,6 +253,7 @@ export const uploadResume = async (req, res) => {
         console.log(
           "Incomplete resume record cleaned up."
         );
+
       } catch (cleanupError) {
         console.error(
           "Failed to clean up incomplete resume:",
@@ -203,10 +263,12 @@ export const uploadResume = async (req, res) => {
     }
 
     // ---------------------------------------
-    // 10. Return error
+    // 11. Return error
     // ---------------------------------------
+
     return res.status(500).json({
       success: false,
+
       message:
         error.message ||
         "Resume analysis failed.",

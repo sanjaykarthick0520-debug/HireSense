@@ -1,8 +1,6 @@
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
-import path from "path";
-import { fileURLToPath } from "url";
 
 import resumeRoutes from "./routes/resumeRoutes.js";
 
@@ -10,12 +8,9 @@ dotenv.config();
 
 const app = express();
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-// ==============================
-// Middleware
-// ==============================
+// =========================================================
+// MIDDLEWARE
+// =========================================================
 
 app.use(cors());
 
@@ -27,20 +22,9 @@ app.use(
   })
 );
 
-// ==============================
-// Serve uploaded resumes
-// ==============================
-
-app.use(
-  "/uploads",
-  express.static(
-    path.join(__dirname, "uploads")
-  )
-);
-
-// ==============================
-// Health Check
-// ==============================
+// =========================================================
+// HEALTH CHECK
+// =========================================================
 
 app.get("/", (req, res) => {
   res.json({
@@ -49,25 +33,15 @@ app.get("/", (req, res) => {
   });
 });
 
-// ==============================
-// Routes
-// ==============================
+// =========================================================
+// RESUME API ROUTES
+// =========================================================
 
-app.get("/api/test", (req, res) => {
-  res.json({
-    success: true,
-    message: "API routing is working 🚀"
-  });
-});
+app.use("/api/resume", resumeRoutes);
 
-app.use(
-  "/api/resume",
-  resumeRoutes
-);
-
-// ==============================
-// 404 Handler
-// ==============================
+// =========================================================
+// 404 HANDLER
+// =========================================================
 
 app.use((req, res) => {
   res.status(404).json({
@@ -76,27 +50,35 @@ app.use((req, res) => {
   });
 });
 
-// ==============================
-// Error Handler
-// ==============================
+// =========================================================
+// ERROR HANDLER
+// =========================================================
 
 app.use((err, req, res, next) => {
-  console.error(err);
+  console.error("Server Error:", err);
 
   res.status(500).json({
     success: false,
-    message: "Internal Server Error",
+    message: err.message || "Internal Server Error",
   });
 });
 
-// ==============================
-// Start Server
-// ==============================
+// =========================================================
+// LOCAL DEVELOPMENT
+// =========================================================
 
 const PORT = process.env.PORT || 5000;
 
-app.listen(PORT, () => {
-  console.log(
-    `🚀 HireSense API running on http://localhost:${PORT}`
-  );
-});
+if (process.env.NODE_ENV !== "production") {
+  app.listen(PORT, () => {
+    console.log(
+      `🚀 HireSense API running on http://localhost:${PORT}`
+    );
+  });
+}
+
+// =========================================================
+// VERCEL
+// =========================================================
+
+export default app;

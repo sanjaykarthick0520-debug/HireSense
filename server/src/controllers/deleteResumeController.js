@@ -1,12 +1,14 @@
-import fs from "fs";
-import path from "path";
+import { del } from "@vercel/blob";
 import prisma from "../config/prisma.js";
 
 export const deleteResume = async (req, res) => {
   try {
     const { id } = req.params;
 
-    // Find resume
+    // ---------------------------------------
+    // 1. Find resume
+    // ---------------------------------------
+
     const resume = await prisma.resume.findUnique({
       where: {
         id,
@@ -20,45 +22,54 @@ export const deleteResume = async (req, res) => {
       });
     }
 
-    // Delete associated analyses first
+    // ---------------------------------------
+    // 2. Delete associated analyses
+    // ---------------------------------------
+
     await prisma.analysis.deleteMany({
       where: {
         resumeId: resume.id,
       },
     });
 
-    // Delete database record
+    // ---------------------------------------
+    // 3. Delete PDF from Vercel Blob
+    // ---------------------------------------
+
+    if (resume.fileUrl) {
+      try {
+        await del(resume.fileUrl);
+
+        console.log(
+          "Resume PDF deleted from Vercel Blob."
+        );
+      } catch (blobError) {
+        console.error(
+          "Could not delete resume from Vercel Blob:",
+          blobError
+        );
+      }
+    }
+
+    // ---------------------------------------
+    // 4. Delete database record
+    // ---------------------------------------
+
     await prisma.resume.delete({
       where: {
         id: resume.id,
       },
     });
 
-    // Delete physical PDF file
-    try {
-      const filePath = path.join(
-        process.cwd(),
-        "src",
-        resume.fileUrl.replace(
-          /^\/uploads\//,
-          "uploads/"
-        )
-      );
-
-      if (fs.existsSync(filePath)) {
-        fs.unlinkSync(filePath);
-      }
-    } catch (fileError) {
-      console.error(
-        "Could not delete physical file:",
-        fileError
-      );
-    }
+    // ---------------------------------------
+    // 5. Return success
+    // ---------------------------------------
 
     return res.json({
       success: true,
       message: "Resume deleted successfully.",
     });
+
   } catch (error) {
     console.error(
       "Delete resume error:",
