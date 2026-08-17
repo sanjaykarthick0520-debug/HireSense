@@ -1,10 +1,7 @@
+```js
 import { put } from "@vercel/blob";
-
-import {
-  DOMMatrix,
-  Path2D,
-  ImageData,
-} from "@napi-rs/canvas";
+import { DOMMatrix, Path2D, ImageData } from "@napi-rs/canvas";
+import { createRequire } from "module";
 
 import prisma from "../config/prisma.js";
 import { analyzeResume } from "../services/geminiService.js";
@@ -18,46 +15,75 @@ globalThis.DOMMatrix = DOMMatrix;
 globalThis.Path2D = Path2D;
 globalThis.ImageData = ImageData;
 
-// IMPORTANT:
-// pdfjs-dist is loaded only AFTER the globals above exist.
+// =========================================================
+// LOAD PDF.JS
+// =========================================================
+
 const pdfjsLib = await import(
   "pdfjs-dist/legacy/build/pdf.mjs"
 );
+
+// =========================================================
+// CONFIGURE PDF.JS WORKER
+// =========================================================
+
+// Resolve the worker directly from node_modules.
+// This prevents PDF.js from guessing the worker location
+// and failing on Vercel serverless deployments.
+
+const require = createRequire(import.meta.url);
+
+const pdfWorkerPath = require.resolve(
+  "pdfjs-dist/legacy/build/pdf.worker.mjs"
+);
+
+pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerPath;
 
 // =========================================================
 // EXTRACT TEXT FROM PDF BUFFER
 // =========================================================
 
 async function extractPdfText(buffer) {
-  const data = new Uint8Array(buffer);
+  try {
+    const data = new Uint8Array(buffer);
 
-  const loadingTask = pdfjsLib.getDocument({
-    data,
-    useWorkerFetch: false,
-    isEvalSupported: false,
-  });
+    const loadingTask = pdfjsLib.getDocument({
+      data,
+      useWorkerFetch: false,
+      isEvalSupported: false,
+      useSystemFonts: true,
+    });
 
-  const pdfDocument = await loadingTask.promise;
+    const pdfDocument = await loadingTask.promise;
 
-  let text = "";
+    let text = "";
 
-  for (
-    let pageNumber = 1;
-    pageNumber <= pdfDocument.numPages;
-    pageNumber++
-  ) {
-    const page = await pdfDocument.getPage(pageNumber);
+    for (
+      let pageNumber = 1;
+      pageNumber <= pdfDocument.numPages;
+      pageNumber++
+    ) {
+      const page = await pdfDocument.getPage(pageNumber);
 
-    const content = await page.getTextContent();
+      const content = await page.getTextContent();
 
-    const pageText = content.items
-      .map((item) => item.str)
-      .join(" ");
+      const pageText = content.items
+        .map((item) => item.str || "")
+        .join(" ");
 
-    text += pageText + "\n";
+      text += pageText + "\n";
+    }
+
+    return text.trim();
+  } catch (error) {
+    console.error("PDF TEXT EXTRACTION ERROR:", error);
+
+    throw new Error(
+      `PDF text extraction failed: ${
+        error.message || "Unknown PDF error"
+      }`
+    );
   }
-
-  return text.trim();
 }
 
 // =========================================================
@@ -68,9 +94,9 @@ export const uploadResume = async (req, res) => {
   let createdResume = null;
 
   try {
-    // ---------------------------------------
-    // 1. Validate uploaded PDF
-    // ---------------------------------------
+    // =====================================================
+    // 1. VALIDATE FILE
+    // =====================================================
 
     if (!req.file) {
       return res.status(400).json({
@@ -79,9 +105,9 @@ export const uploadResume = async (req, res) => {
       });
     }
 
-    // ---------------------------------------
-    // 2. Get target job role
-    // ---------------------------------------
+    // =====================================================
+    // 2. VALIDATE TARGET ROLE
+    // =====================================================
 
     const targetRole = req.body.targetRole?.trim();
 
@@ -93,11 +119,17 @@ export const uploadResume = async (req, res) => {
       });
     }
 
-    console.log(`Target role: ${targetRole}`);
+    console.log(
+      `Target role: ${targetRole}`
+    );
 
-    // ---------------------------------------
-    // 3. Extract text from PDF
-    // ---------------------------------------
+    console.log(
+      `Processing resume: ${req.file.originalname}`
+    );
+
+    // =====================================================
+    // 3. EXTRACT PDF TEXT
+    // =====================================================
 
     const resumeText = await extractPdfText(
       req.file.buffer
@@ -110,15 +142,18 @@ export const uploadResume = async (req, res) => {
     }
 
     console.log(
-      "PDF text extracted successfully."
+      `PDF text extracted successfully. Characters: ${resumeText.length}`
     );
 
-    // ---------------------------------------
-    // 4. Upload PDF to Vercel Blob
-    // ---------------------------------------
+    // =====================================================
+    // 4. UPLOAD PDF TO VERCEL BLOB
+    // =====================================================
 
-    const safeFileName = req.file.originalname
-      .replace(/[^a-zA-Z0-9.-]/g, "_");
+    const safeFileName =
+      req.file.originalname.replace(
+        /[^a-zA-Z0-9.-]/g,
+        "_"
+      );
 
     const blobPath =
       `resumes/${Date.now()}-${safeFileName}`;
@@ -136,23 +171,33 @@ export const uploadResume = async (req, res) => {
       "Resume uploaded to Vercel Blob successfully."
     );
 
-    // ---------------------------------------
-    // 5. Save resume in database
-    // ---------------------------------------
+    // =====================================================
+    // 5. CREATE RESUME DATABASE RECORD
+    // =====================================================
 
-    createdResume = await prisma.resume.create({
-      data: {
-        title: req.file.originalname,
-        originalName: req.file.originalname,
-        fileUrl: blob.url,
-        targetRole: targetRole,
-        aiStatus: "Analyzing",
-      },
-    });
+    createdResume =
+      await prisma.resume.create({
+        data: {
+          title: req.file.originalname,
 
-    // ---------------------------------------
-    // 6. Send resume + target role to Gemini
-    // ---------------------------------------
+          originalName:
+            req.file.originalname,
+
+          fileUrl: blob.url,
+
+          targetRole,
+
+          aiStatus: "Analyzing",
+        },
+      });
+
+    console.log(
+      `Resume database record created: ${createdResume.id}`
+    );
+
+    // =====================================================
+    // 6. GEMINI AI ANALYSIS
+    // =====================================================
 
     const aiResult = await analyzeResume(
       resumeText,
@@ -160,18 +205,19 @@ export const uploadResume = async (req, res) => {
     );
 
     console.log(
-      "Gemini analysis completed."
+      "Gemini analysis completed successfully."
     );
 
-    // ---------------------------------------
-    // 7. Save complete AI analysis
-    // ---------------------------------------
+    // =====================================================
+    // 7. SAVE AI ANALYSIS
+    // =====================================================
 
     const analysis =
       await prisma.analysis.create({
         data: {
           targetRole:
-            aiResult.targetRole || targetRole,
+            aiResult.targetRole ||
+            targetRole,
 
           overallScore:
             aiResult.overallScore,
@@ -211,9 +257,13 @@ export const uploadResume = async (req, res) => {
         },
       });
 
-    // ---------------------------------------
-    // 8. Update resume with final AI status
-    // ---------------------------------------
+    console.log(
+      "AI analysis saved to database."
+    );
+
+    // =====================================================
+    // 8. UPDATE RESUME
+    // =====================================================
 
     const updatedResume =
       await prisma.resume.update({
@@ -223,13 +273,13 @@ export const uploadResume = async (req, res) => {
 
         data: {
           targetRole:
-            aiResult.targetRole || targetRole,
+            aiResult.targetRole ||
+            targetRole,
 
           atsScore:
             aiResult.overallScore,
 
-          aiStatus:
-            "Analyzed",
+          aiStatus: "Analyzed",
         },
       });
 
@@ -237,9 +287,9 @@ export const uploadResume = async (req, res) => {
       `Resume analyzed successfully. ATS Score: ${aiResult.overallScore}`
     );
 
-    // ---------------------------------------
-    // 9. Return result
-    // ---------------------------------------
+    // =====================================================
+    // 9. SUCCESS RESPONSE
+    // =====================================================
 
     return res.status(201).json({
       success: true,
@@ -247,21 +297,35 @@ export const uploadResume = async (req, res) => {
       message:
         "Resume analyzed successfully.",
 
-      resume:
-        updatedResume,
+      resume: updatedResume,
 
       analysis,
     });
 
   } catch (error) {
+    // =====================================================
+    // ERROR LOG
+    // =====================================================
+
     console.error(
-      "Resume analysis error:",
+      "========================================"
+    );
+
+    console.error(
+      "RESUME ANALYSIS ERROR"
+    );
+
+    console.error(
       error
     );
 
-    // ---------------------------------------
-    // 10. Cleanup incomplete database record
-    // ---------------------------------------
+    console.error(
+      "========================================"
+    );
+
+    // =====================================================
+    // 10. CLEANUP DATABASE RECORD
+    // =====================================================
 
     if (createdResume) {
       try {
@@ -283,9 +347,9 @@ export const uploadResume = async (req, res) => {
       }
     }
 
-    // ---------------------------------------
-    // 11. Return error
-    // ---------------------------------------
+    // =====================================================
+    // 11. ERROR RESPONSE
+    // =====================================================
 
     return res.status(500).json({
       success: false,
@@ -296,3 +360,4 @@ export const uploadResume = async (req, res) => {
     });
   }
 };
+```
